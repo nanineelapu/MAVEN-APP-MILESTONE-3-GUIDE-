@@ -1,0 +1,22 @@
+# =====================================================================
+# Ansible Inventory — Configuration Management Server -> Application Server
+# Reused from the e-commerce case study. Just confirm the Tomcat IP/key.
+# =====================================================================
+
+[tomcat]
+# Replace with your existing Tomcat (Instance 3) PRIVATE or PUBLIC IP
+tomcat-server ansible_host=<TOMCAT_SERVER_IP>
+
+[tomcat:vars]
+# SSH user for the Tomcat box (Ubuntu AMI = ubuntu, Amazon Linux = ec2-user)
+ansible_user=ubuntu
+
+# Same SSH key Jenkins/Ansible already uses to reach Tomcat (reused)
+ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/tomcat_key.pem
+
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+# ---- Tomcat paths/service on the app server (edit if yours differ) ----
+tomcat_webapps=/opt/tomcat/webapps
+tomcat_service=tomcat

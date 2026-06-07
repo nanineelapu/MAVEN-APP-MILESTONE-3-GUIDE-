@@ -1,0 +1,61 @@
+==========================================================
+COMPLETE FLOW CHECKLIST — Maven Web App CI/CD (Milestone 3)
+Reusing the same 3 instances from the e-commerce case study.
+==========================================================
+
+KEY IDEA: Do NOT create new servers. Reuse Jenkins + SonarQube + Tomcat + Ansible.
+Only NEW things: (a) Maven app repo URL, (b) Sonar project key, (c) new Jenkins job,
+(d) WAR name/context.
+
+----------------------------------------------------------
+PRE-FLIGHT (5 min)
+----------------------------------------------------------
+[ ] Jenkins running        : sudo systemctl status jenkins
+[ ] Maven present          : mvn -version
+[ ] Ansible present        : ansible --version
+[ ] Sonar reachable        : curl -I http://<SONAR_IP>:9000   (200)
+[ ] Tomcat reachable       : curl -I http://<TOMCAT_IP>:8080  (200)
+[ ] Ansible -> Tomcat ping : ansible -i hosts.txt tomcat -m ping  (pong)
+
+----------------------------------------------------------
+EDIT THESE PLACEHOLDERS
+----------------------------------------------------------
+Jenkinsfile : APP_REPO, APP_BRANCH, SONAR_KEY, WAR_NAME, maven/jdk tool names, SONAR_SERVER
+hosts.txt   : <TOMCAT_SERVER_IP>, ansible_user, key path, tomcat_webapps, tomcat_service
+deploy.yml  : defaults usually fine (overridden by Jenkins extra-vars)
+
+----------------------------------------------------------
+STAGE FLOW (what the pipeline does)
+----------------------------------------------------------
+1. Checkout      -> git clone Maven repo, log commit
+2. Sonar         -> mvn clean compile sonar:sonar -Dsonar.projectKey=maven-web-app
+3. Quality Gate  -> waitForQualityGate abortPipeline:true   (FAIL = STOP)
+4. Build WAR     -> mvn clean package -DskipTests -> target/*.war
+5. Deploy        -> ansible-playbook -i hosts.txt deploy.yml
+                    (stop tomcat -> rm old war -> copy new war -> start -> HTTP 200)
+
+VERIFY: http://<TOMCAT_IP>:8080/maven-web-app/
+
+----------------------------------------------------------
+CREATE THE JENKINS JOB
+----------------------------------------------------------
+New Item -> "maven-web-app-pipeline" -> Pipeline
+Pipeline -> "Pipeline script from SCM" -> Git -> <this guide repo> -> Jenkinsfile
+Save -> Build Now -> watch 5 green stages.
+
+==========================================================
+GIT REPO SETUP — push this guide to GitHub
+==========================================================
+# 1) From this folder (e:\MAVEN APP MILESTONE ASSESMENT 3)
+git init
+git add .
+git commit -m "Maven web app CI/CD guide - Milestone 3 (reuses existing infra)"
+
+# 2) Create an EMPTY repo on GitHub, e.g. MILESTONE-3-MAVEN-GUIDE
+#    Then connect and push (HTTPS):
+git branch -M master
+git remote add origin https://github.com/<YOUR_GH_USERNAME>/MILESTONE-3-MAVEN-GUIDE.git
+git push -u origin master
+
+# If push asks for a password, use a GitHub Personal Access Token (PAT), not your login password.
+==========================================================

@@ -1,0 +1,69 @@
+# =====================================================================
+# Ansible Playbook — Deploy Maven WAR to Apache Tomcat
+# Configuration Management automation (Stage 5 of the pipeline).
+#
+# Flow: stop Tomcat -> remove old deployment -> copy new WAR -> start Tomcat -> verify
+# Run by Jenkins:  ansible-playbook -i hosts.txt deploy.yml \
+#                    --extra-vars "war_src=<path>/maven-web-app.war war_name=maven-web-app.war"
+# =====================================================================
+
+- name: Deploy Maven Web Application WAR to Tomcat
+  hosts: tomcat
+  become: true
+
+  vars:
+    # Defaults; overridden by Jenkins --extra-vars
+    war_name: maven-web-app.war
+    war_src: "{{ playbook_dir }}/maven-web-app.war"
+    # app context = war name without .war  (used for the health check URL)
+    app_context: "{{ war_name | regex_replace('\\.war$', '') }}"
+
+  tasks:
+
+    - name: 1) Stop Tomcat service (stop running application services)
+      service:
+        name: "{{ tomcat_service }}"
+        state: stopped
+      ignore_errors: true   # first run may have it stopped already
+
+    - name: 2) Remove previous WAR (replace existing deployment)
+      file:
+        path: "{{ tomcat_webapps }}/{{ war_name }}"
+        state: absent
+
+    - name: 3) Remove previous exploded app directory
+      file:
+        path: "{{ tomcat_webapps }}/{{ app_context }}"
+        state: absent
+
+    - name: 4) Copy the new WAR artifact to Tomcat webapps (deploy latest version)
+      copy:
+        src: "{{ war_src }}"
+        dest: "{{ tomcat_webapps }}/{{ war_name }}"
+        mode: '0644'
+
+    - name: 5) Start Tomcat service (restart application services)
+      service:
+        name: "{{ tomcat_service }}"
+        state: started
+
+    - name: 6) Wait for Tomcat port 8080 to come up
+      wait_for:
+        port: 8080
+        host: 127.0.0.1
+        delay: 10
+        timeout: 90
+
+    - name: 7) Validate deployment (service availability check)
+      uri:
+        url: "http://localhost:8080/{{ app_context }}/"
+        status_code: 200
+        return_content: false
+      register: health
+      retries: 6
+      delay: 10
+      until: health.status == 200
+
+    - name: 8) Report deployment result
+      debug:
+        msg: "✅ Deployed {{ war_name }} — app live at http://<TOMCAT_IP>:8080/{{ app_context }}/ (HTTP {{ health.status }})"

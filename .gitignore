@@ -1,0 +1,21 @@
+# Build output
+target/
+*.war
+*.jar
+*.class
+
+# Secrets / keys — NEVER commit
+*.pem
+*.key
+.env
+credentials*
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Ansible
+*.retry
