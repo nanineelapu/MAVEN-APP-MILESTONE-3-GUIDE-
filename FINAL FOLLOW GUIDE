@@ -632,3 +632,5 @@ http://<VM3-Public-IP>:8080/maven-web-application
 | Ansible WAR not found | Run Maven build first in Jenkins pipeline |
 | App not showing | Check Tomcat is running on VM3 port 8080 |
 | Not Authorized SonarQube | Update sonar-token credential in Jenkins |
+su - sonar
+/opt/sonarqube/bin/linux-x86-64/sonar.sh start
