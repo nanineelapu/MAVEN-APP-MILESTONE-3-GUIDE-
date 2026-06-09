@@ -1,0 +1,634 @@
+# Milestone 3 — Maven Web Application CI/CD Pipeline
+## Complete Step-by-Step Guide
+
+---
+
+## Your Infrastructure
+
+| VM | Purpose | Public IP | Port |
+|---|---|---|---|
+| VM1 | Jenkins + Maven + Ansible | 43.203.188.238 | 8080 |
+| VM2 | SonarQube | 3.36.47.31 | 9000 |
+| VM3 | Tomcat App Server | Your VM3 Public IP | 8080 |
+
+> VM3 Private IP: 172.31.62.155
+
+---
+
+## STEP 1 — Launch 3 EC2 Instances (AWS Console)
+
+Go to AWS Console → EC2 → Launch Instance
+
+| Name | AMI | Type | Ports |
+|---|---|---|---|
+| Jenkins-Server | Amazon Linux 2023 | t2.medium | 22, 8080 |
+| SonarQube-Server | Amazon Linux 2023 | c7i-flex.large | 22, 9000 |
+| App-Server | Amazon Linux 2023 | t2.micro | 22, 8080 |
+
+📸 **Screenshot 1:** EC2 console showing all 3 instances **Running**
+
+---
+
+## STEP 2 — VM1 Setup (Jenkins + Maven + Ansible)
+
+Connect to VM1 via PuTTY then run:
+
+```bash
+sudo su -
+nano setup.sh
+```
+
+Paste this script:
+
+```bash
+#!/bin/bash
+set -e
+
+echo "=== Update System ==="
+dnf update -y
+
+echo "=== Install Java 21 ==="
+dnf install java-21-amazon-corretto -y
+java -version
+
+echo "=== Add Jenkins Repo ==="
+wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
+rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+
+echo "=== Install Jenkins ==="
+dnf install jenkins -y
+
+echo "=== Set JAVA_HOME for Jenkins ==="
+mkdir -p /etc/systemd/system/jenkins.service.d
+cat > /etc/systemd/system/jenkins.service.d/override.conf << EOF
+[Service]
+Environment="JAVA_HOME=/usr/lib/jvm/java-21-amazon-corretto.x86_64"
+EOF
+
+echo "=== Start Jenkins ==="
+systemctl daemon-reload
+systemctl start jenkins
+systemctl enable jenkins
+
+echo "=== Install Git, Maven, Ansible ==="
+dnf install git maven ansible -y
+
+echo "=== Jenkins Unlock Password ==="
+cat /var/lib/jenkins/secrets/initialAdminPassword
+```
+
+Run it:
+
+```bash
+chmod +x setup.sh
+bash setup.sh
+```
+
+Open browser: `http://43.203.188.238:8080`
+
+📸 **Screenshot 2:** PuTTY terminal logged into Jenkins-Server
+
+---
+
+## STEP 3 — Setup Jenkins (Browser)
+
+1. Paste unlock password → Continue
+2. Install suggested plugins → wait
+3. Create admin user:
+   - Username: `admin`
+   - Password: `Admin@123`
+4. Save and Finish → Start using Jenkins
+
+Install extra plugins:
+- Manage Jenkins → Plugins → Available
+- Search and install: `SonarQube Scanner`, `Maven Integration`, `Ansible`, `SSH Agent`
+- Tick Restart after install
+
+📸 **Screenshot 3:** Jenkins Dashboard after login
+
+---
+
+## STEP 4 — VM2 Setup (SonarQube)
+
+Connect to VM2 via PuTTY then run:
+
+```bash
+sudo su -
+nano sonar.sh
+```
+
+Paste this script:
+
+```bash
+#!/bin/bash
+set -e
+
+echo "=== Update System ==="
+dnf update -y
+
+echo "=== Install Java 17 ==="
+dnf install java-17-amazon-corretto -y
+java -version
+
+echo "=== Set vm.max_map_count ==="
+sysctl -w vm.max_map_count=524288
+echo "vm.max_map_count=524288" >> /etc/sysctl.conf
+
+echo "=== Add Swap (2GB) ==="
+dd if=/dev/zero of=/swapfile bs=1M count=2048
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+free -h
+
+echo "=== Install wget, unzip ==="
+dnf install wget unzip -y
+
+echo "=== Download SonarQube 10.4.1 ==="
+cd /tmp
+wget -O sonarqube.zip https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-10.4.1.88267.zip
+
+echo "=== Extract SonarQube ==="
+rm -rf /opt/sonarqube
+unzip -q sonarqube.zip
+mv sonarqube-10.4.1.88267 /opt/sonarqube
+
+echo "=== Create sonar user ==="
+id sonar >/dev/null 2>&1 || useradd sonar
+chown -R sonar:sonar /opt/sonarqube
+
+echo "=== Start SonarQube ==="
+sudo -u sonar /opt/sonarqube/bin/linux-x86-64/sonar.sh start
+
+echo "=== Waiting 90 seconds ==="
+sleep 90
+
+echo "=== Status ==="
+sudo -u sonar /opt/sonarqube/bin/linux-x86-64/sonar.sh status
+
+echo "Open: http://YOUR-VM2-PUBLIC-IP:9000"
+echo "Login: admin / admin"
+```
+
+Run it:
+
+```bash
+chmod +x sonar.sh
+bash sonar.sh
+```
+
+Open browser: `http://3.36.47.31:9000`
+Login: `admin` / `admin` → change password to `Admin@123`
+
+📸 **Screenshot 4:** SonarQube Dashboard after login
+
+---
+
+## STEP 5 — VM3 Setup (Tomcat)
+
+Connect to VM3 via PuTTY then run:
+
+```bash
+sudo su -
+nano tomcat.sh
+```
+
+Paste this script:
+
+```bash
+#!/bin/bash
+set -e
+
+echo "=== Update System ==="
+dnf update -y
+
+echo "=== Install Java 21 ==="
+dnf install java-21-amazon-corretto -y
+java -version
+
+echo "=== Download Tomcat 9 ==="
+cd /opt
+wget https://archive.apache.org/dist/tomcat/tomcat-9/v9.0.85/bin/apache-tomcat-9.0.85.tar.gz
+
+echo "=== Extract Tomcat ==="
+tar -xvf apache-tomcat-9.0.85.tar.gz
+mv apache-tomcat-9.0.85 tomcat
+chmod +x /opt/tomcat/bin/*.sh
+
+echo "=== Create Tomcat systemd service ==="
+cat > /etc/systemd/system/tomcat.service << EOF
+[Unit]
+Description=Apache Tomcat
+After=network.target
+
+[Service]
+Type=forking
+Environment="JAVA_HOME=/usr/lib/jvm/java-21-amazon-corretto.x86_64"
+Environment="CATALINA_HOME=/opt/tomcat"
+ExecStart=/opt/tomcat/bin/startup.sh
+ExecStop=/opt/tomcat/bin/shutdown.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "=== Start Tomcat ==="
+systemctl daemon-reload
+systemctl start tomcat
+systemctl enable tomcat
+
+echo "Open: http://YOUR-VM3-PUBLIC-IP:8080"
+```
+
+Run it:
+
+```bash
+chmod +x tomcat.sh
+bash tomcat.sh
+```
+
+Open browser: `http://<VM3-Public-IP>:8080`
+
+📸 **Screenshot 5:** Apache Tomcat welcome page in browser
+
+---
+
+## STEP 6 — SSH Key Setup (VM1 → VM3)
+
+Run on VM1:
+
+```bash
+sudo su -
+mkdir -p /var/lib/jenkins/.ssh
+chown jenkins:jenkins /var/lib/jenkins/.ssh
+chmod 700 /var/lib/jenkins/.ssh
+sudo -u jenkins ssh-keygen -t rsa -b 2048 -f /var/lib/jenkins/.ssh/id_rsa -N ""
+cat /var/lib/jenkins/.ssh/id_rsa.pub
+```
+
+Copy the key output.
+
+Now on VM3 PuTTY:
+
+```bash
+sudo su -
+echo "PASTE_COPIED_KEY_HERE" >> /home/ec2-user/.ssh/authorized_keys
+chmod 600 /home/ec2-user/.ssh/authorized_keys
+```
+
+Test from VM1:
+
+```bash
+sudo -u jenkins ssh -o StrictHostKeyChecking=no ec2-user@172.31.62.155 "echo SUCCESS"
+```
+
+📸 **Screenshot 6:** Shows `SUCCESS` in terminal
+
+---
+
+## STEP 7 — Ansible Inventory
+
+On VM1:
+
+```bash
+nano /etc/ansible/hosts
+```
+
+Paste:
+
+```ini
+[appserver]
+172.31.62.155 ansible_user=ec2-user ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa
+```
+
+Test ping:
+
+```bash
+sudo -u jenkins ansible -i /etc/ansible/hosts appserver -m ping
+```
+
+📸 **Screenshot 7:** Shows `"ping": "pong"` SUCCESS
+
+---
+
+## STEP 8 — Create Ansible Deploy Playbook
+
+On VM1:
+
+```bash
+cat > /etc/ansible/deploy-maven.yml << 'EOF'
+---
+- name: Deploy Maven Web Application to Tomcat
+  hosts: appserver
+  become: yes
+  tasks:
+
+    - name: Stop Tomcat
+      systemd:
+        name: tomcat
+        state: stopped
+      ignore_errors: yes
+
+    - name: Remove old deployment
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /opt/tomcat/webapps/maven-web-application
+        - /opt/tomcat/webapps/maven-web-application.war
+
+    - name: Copy WAR to Tomcat
+      copy:
+        src: /var/lib/jenkins/workspace/maven-web-application/target/maven-web-application.war
+        dest: /opt/tomcat/webapps/maven-web-application.war
+        mode: '0644'
+
+    - name: Start Tomcat
+      systemd:
+        name: tomcat
+        state: started
+
+    - name: Wait for port 8080
+      wait_for:
+        port: 8080
+        delay: 10
+        timeout: 60
+EOF
+```
+
+Syntax check:
+
+```bash
+sudo -u jenkins ansible-playbook /etc/ansible/deploy-maven.yml --syntax-check
+```
+
+📸 **Screenshot 8:** Syntax check showing no errors
+
+---
+
+## STEP 9 — Update pom.xml with Your SonarQube Details
+
+On VM1 — clone the repo first:
+
+```bash
+cd /tmp
+git clone https://github.com/nanineelapu/maven-web-application.git
+cd maven-web-application
+nano pom.xml
+```
+
+Find these lines in `<properties>` section:
+
+```xml
+<sonar.host.url>http://18.229.137.106:9000</sonar.host.url>
+<sonar.login>admin</sonar.login>
+<sonar.password>Mur@li2025</sonar.password>
+```
+
+Change to:
+
+```xml
+<sonar.host.url>http://3.36.47.31:9000</sonar.host.url>
+<sonar.login>YOUR_SONAR_TOKEN_HERE</sonar.login>
+```
+
+Delete the `<sonar.password>` line.
+
+Save → Ctrl+X → Y → Enter
+
+Commit and push:
+
+```bash
+git add pom.xml
+git commit -m "Update SonarQube configuration"
+git push origin master
+```
+
+---
+
+## STEP 10 — Jenkins Configuration (Browser)
+
+### A — Generate SonarQube Token
+
+Go to `http://3.36.47.31:9000`
+Avatar → My Account → Security → Generate Tokens:
+- Name: `jenkins-token`
+- Type: **Global Analysis Token**
+- Expiration: **No expiration**
+- Click Generate → **COPY THE TOKEN**
+
+### B — Add Token to Jenkins Credentials
+
+Jenkins → Manage Jenkins → Credentials → Global → Add Credentials:
+- Kind: `Secret text`
+- Secret: paste token
+- ID: `sonar-token`
+- Click Create
+
+### C — Register SonarQube Server
+
+Jenkins → Manage Jenkins → System → SonarQube servers → Add SonarQube:
+- Name: `SonarQube`
+- Server URL: `http://3.36.47.31:9000`
+- Server authentication token: select `sonar-token`
+- Click Save
+
+### D — Configure Maven Tool
+
+Jenkins → Manage Jenkins → Tools → Maven installations → Add Maven:
+- Name: `Maven`
+- Tick Install automatically
+- Version: `3.9.6`
+- Click Save
+
+📸 **Screenshot 9:** SonarQube server config showing in Jenkins System settings
+
+---
+
+## STEP 11 — SonarQube Webhook
+
+Go to `http://3.36.47.31:9000`
+Administration → Configuration → Webhooks → Create:
+- Name: `maven-web-application`
+- URL: `http://43.203.188.238:8080/sonarqube-webhook/`
+- Click Create ✅
+
+---
+
+## STEP 12 — Create Jenkins Pipeline Job
+
+Jenkins → New Item:
+- Name: `maven-web-application`
+- Type: Pipeline
+- Click OK
+
+Scroll to Pipeline section → paste this Jenkinsfile:
+
+```groovy
+pipeline {
+    agent any
+    tools {
+        maven 'Maven'
+    }
+    stages {
+
+        stage('1. Clone Source Code') {
+            steps {
+                git branch: 'master',
+                    url: 'https://github.com/nanineelapu/maven-web-application.git'
+            }
+        }
+
+        stage('2. SonarQube Code Quality') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh 'mvn clean verify sonar:sonar -Dsonar.projectKey=maven-web-application -DskipTests'
+                }
+            }
+        }
+
+        stage('3. Quality Gate Check') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('4. Maven Build') {
+            steps {
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('5. Ansible Deploy') {
+            steps {
+                sh 'ansible-playbook -i /etc/ansible/hosts /etc/ansible/deploy-maven.yml'
+            }
+        }
+
+    }
+    post {
+        success {
+            echo 'Pipeline SUCCESS - Maven Web App deployed to Tomcat!'
+        }
+        failure {
+            echo 'Pipeline FAILED - Deployment stopped.'
+        }
+    }
+}
+```
+
+Click Save → Build Now
+
+📸 **Screenshot 10:** Jenkins Stage View all 5 stages GREEN
+
+---
+
+## STEP 13 — Setup GitHub Webhook (Auto Trigger)
+
+### A — Jenkins Side
+
+Jenkins → maven-web-application → Configure
+Build Triggers → tick ✅ **GitHub hook trigger for GITScm polling**
+Click Save
+
+### B — GitHub Side
+
+Go to: `https://github.com/nanineelapu/maven-web-application`
+Settings → Webhooks → Add webhook:
+
+| Field | Value |
+|---|---|
+| Payload URL | `http://43.203.188.238:8080/github-webhook/` |
+| Content type | `application/json` |
+| SSL verification | Disable |
+| Which events | Just the push event |
+| Active | ✅ |
+
+Click **Add webhook**
+
+Wait 10 seconds → refresh → green tick ✅
+
+📸 **Screenshot 11:** GitHub webhook showing green tick
+
+### C — Test Auto Trigger
+
+Go to repo → open README.md → click pencil ✏️
+Add this line at bottom:
+```
+CI/CD Automated Pipeline - Milestone 3
+```
+Commit changes
+
+Go to Jenkins → within 30 seconds pipeline auto starts ✅
+
+📸 **Screenshot 12:** Jenkins showing auto-triggered build
+
+---
+
+## STEP 14 — Verify Everything
+
+### Check Quality Gate in SonarQube
+
+Go to `http://3.36.47.31:9000` → Projects → maven-web-application
+Should show **Passed** ✅
+
+📸 **Screenshot 13:** SonarQube Quality Gate Passed
+
+### Check Ansible Deploy in Console Output
+
+Jenkins → maven-web-application → last build → Console Output
+Stage 5 should show:
+```
+PLAY RECAP
+172.31.62.155 : ok=5  changed=2  unreachable=0  failed=0
+```
+
+📸 **Screenshot 14:** Ansible tasks ok/changed in console
+
+### Check App Running
+
+Open browser:
+```
+http://<VM3-Public-IP>:8080/maven-web-application
+```
+
+📸 **Screenshot 15:** Maven Web App running in browser
+
+---
+
+## All 15 Screenshots Summary
+
+| # | What | Where |
+|---|---|---|
+| 1 | All 3 EC2 instances Running | AWS Console |
+| 2 | PuTTY terminal in Jenkins-Server | PuTTY |
+| 3 | Jenkins Dashboard | Browser |
+| 4 | SonarQube Dashboard | Browser |
+| 5 | Tomcat welcome page | Browser |
+| 6 | SSH SUCCESS from VM1 to VM3 | PuTTY |
+| 7 | Ansible ping pong SUCCESS | PuTTY |
+| 8 | Ansible syntax-check no errors | PuTTY |
+| 9 | SonarQube server config in Jenkins | Browser |
+| 10 | All 5 pipeline stages GREEN | Browser |
+| 11 | GitHub webhook green tick | Browser |
+| 12 | Auto-triggered build in Jenkins | Browser |
+| 13 | SonarQube Quality Gate Passed | Browser |
+| 14 | Ansible tasks ok/changed in console | Browser |
+| 15 | App running at VM3-IP:8080/maven-web-application | Browser |
+
+---
+
+## Quick Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Jenkins won't start | Check Java 21 installed, check override.conf |
+| SonarQube won't start | Add swap, set vm.max_map_count=524288 |
+| Quality Gate timeout | Check SonarQube webhook URL is correct |
+| Ansible WAR not found | Run Maven build first in Jenkins pipeline |
+| App not showing | Check Tomcat is running on VM3 port 8080 |
+| Not Authorized SonarQube | Update sonar-token credential in Jenkins |
